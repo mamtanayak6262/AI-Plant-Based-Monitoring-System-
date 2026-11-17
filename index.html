@@ -1,1 +1,712 @@
+# ==============================================================
+# 🌿 AI PLANT BASED MONITORING SYSTEM
+# Google Colab | Kaggle | TensorFlow | MobileNetV2 | Gradio
+# Complete Single Cell Project
+# ==============================================================
 
+!pip -q install -U kagglehub gradio
+
+import os
+import pathlib
+import numpy as np
+import tensorflow as tf
+import gradio as gr
+import kagglehub
+
+from PIL import Image
+from tensorflow.keras import layers, models
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.callbacks import EarlyStopping
+
+print("=" * 60)
+print("🌱 AI PLANT BASED MONITORING SYSTEM")
+print("=" * 60)
+
+# --------------------------------------------------------------
+# 1. CONFIGURATION
+# --------------------------------------------------------------
+
+IMAGE_SIZE = 160
+BATCH_SIZE = 32
+EPOCHS = 5
+SEED = 42
+
+DATASET_ID = "emmarex/plantdisease"
+
+# --------------------------------------------------------------
+# 2. DOWNLOAD DATASET FROM KAGGLE
+# --------------------------------------------------------------
+
+print("\n📥 Downloading PlantVillage dataset...")
+
+dataset_path = kagglehub.dataset_download(DATASET_ID)
+
+print("Dataset downloaded:", dataset_path)
+
+# Find folder containing disease class folders
+
+image_extensions = {".jpg", ".jpeg", ".png", ".bmp"}
+
+candidates = []
+
+for current, dirs, files in os.walk(dataset_path):
+
+    dirs[:] = [d for d in dirs if not d.startswith(".")]
+
+    if len(dirs) >= 5:
+
+        image_count = 0
+
+        for class_dir in dirs:
+            class_path = os.path.join(current, class_dir)
+
+            for _, _, class_files in os.walk(class_path):
+                image_count += sum(
+                    1 for f in class_files
+                    if pathlib.Path(f).suffix.lower() in image_extensions
+                )
+
+        if image_count > 100:
+            candidates.append((image_count, current))
+
+if not candidates:
+    raise RuntimeError(
+        "Could not locate PlantVillage class folders. "
+        "Check Kaggle dataset download and folder structure."
+    )
+
+DATA_DIR = max(candidates, key=lambda x: x[0])[1]
+
+print("Selected folder:", DATA_DIR)
+
+# --------------------------------------------------------------
+# 3. LOAD DATASET
+# --------------------------------------------------------------
+
+print("\n📊 Loading images...")
+
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    DATA_DIR,
+    validation_split=0.20,
+    subset="training",
+    seed=SEED,
+    image_size=(IMAGE_SIZE, IMAGE_SIZE),
+    batch_size=BATCH_SIZE,
+    label_mode="int"
+)
+
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    DATA_DIR,
+    validation_split=0.20,
+    subset="validation",
+    seed=SEED,
+    image_size=(IMAGE_SIZE, IMAGE_SIZE),
+    batch_size=BATCH_SIZE,
+    label_mode="int"
+)
+
+class_names = train_ds.class_names
+NUM_CLASSES = len(class_names)
+
+print("Total classes:", NUM_CLASSES)
+
+AUTOTUNE = tf.data.AUTOTUNE
+
+train_ds = train_ds.prefetch(AUTOTUNE)
+val_ds = val_ds.prefetch(AUTOTUNE)
+
+# --------------------------------------------------------------
+# 4. DATA AUGMENTATION
+# --------------------------------------------------------------
+
+augmentation = tf.keras.Sequential([
+    layers.RandomFlip("horizontal"),
+    layers.RandomRotation(0.12),
+    layers.RandomZoom(0.12),
+    layers.RandomContrast(0.10)
+])
+
+# --------------------------------------------------------------
+# 5. BUILD AI MODEL
+# --------------------------------------------------------------
+
+print("\n🧠 Building MobileNetV2 model...")
+
+base_model = MobileNetV2(
+    input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3),
+    include_top=False,
+    weights="imagenet"
+)
+
+base_model.trainable = False
+
+inputs = layers.Input(shape=(IMAGE_SIZE, IMAGE_SIZE, 3))
+
+x = augmentation(inputs)
+x = layers.Lambda(preprocess_input)(x)
+x = base_model(x, training=False)
+x = layers.GlobalAveragePooling2D()(x)
+x = layers.Dropout(0.35)(x)
+
+outputs = layers.Dense(
+    NUM_CLASSES,
+    activation="softmax"
+)(x)
+
+model = models.Model(inputs, outputs)
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+model.summary()
+
+# --------------------------------------------------------------
+# 6. TRAIN MODEL
+# --------------------------------------------------------------
+
+print("\n🚀 Training started...")
+
+early_stop = EarlyStopping(
+    monitor="val_loss",
+    patience=2,
+    restore_best_weights=True
+)
+
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=EPOCHS,
+    callbacks=[early_stop]
+)
+
+model.save("/content/AI_Plant_Monitoring_Model.keras")
+
+best_accuracy = max(history.history["val_accuracy"]) * 100
+
+print("\n✅ MODEL TRAINING COMPLETED")
+print("Validation accuracy:", round(best_accuracy, 2), "%")
+
+# --------------------------------------------------------------
+# 7. DISEASE MANAGEMENT KNOWLEDGE BASE
+# --------------------------------------------------------------
+
+DISEASE_ADVICE = {
+
+    "healthy": {
+        "status": "Healthy Plant",
+        "cause": "कोई पहचाना गया रोग नहीं।",
+        "symptoms": "पत्ती में इस मॉडल के अनुसार स्पष्ट रोग के लक्षण नहीं मिले।",
+        "treatment": [
+            "पौधे को नियमित और संतुलित पानी दें।",
+            "मिट्टी की नमी और जल निकासी पर ध्यान दें।",
+            "संतुलित पोषण दें।",
+            "हर सप्ताह पत्तियों की जाँच करें।",
+            "खेत में खरपतवार नियंत्रित रखें।"
+        ],
+        "prevention": [
+            "स्वस्थ बीज और पौधों का उपयोग करें।",
+            "खेत की साफ-सफाई रखें।",
+            "फसल चक्र अपनाएँ।"
+        ]
+    },
+
+    "early_blight": {
+        "status": "Early Blight",
+        "cause": "यह सामान्यतः Alternaria फफूंद से जुड़ा रोग है।",
+        "symptoms": "पत्तियों पर भूरे गोल धब्बे और उनके चारों ओर पीले क्षेत्र दिखाई दे सकते हैं।",
+        "treatment": [
+            "संक्रमित पत्तियों को हटाएँ।",
+            "पत्तियों पर ऊपर से पानी डालने से बचें।",
+            "पौधों के बीच उचित दूरी रखें।",
+            "स्थानीय कृषि विशेषज्ञ की सलाह से उपयुक्त पंजीकृत फफूंदनाशक चुनें।"
+        ],
+        "prevention": [
+            "फसल अवशेष हटाएँ।",
+            "फसल चक्र अपनाएँ।",
+            "स्वस्थ पौध सामग्री इस्तेमाल करें।"
+        ]
+    },
+
+    "late_blight": {
+        "status": "Late Blight",
+        "cause": "यह Phytophthora infestans से संबंधित गंभीर रोग है।",
+        "symptoms": "पत्तियों पर पानी जैसे गहरे धब्बे बन सकते हैं। नमी में सफेद फफूंद जैसी परत दिख सकती है।",
+        "treatment": [
+            "संक्रमित पौधों को अलग करें।",
+            "रोगग्रस्त पत्तियों और अवशेषों का उचित निपटान करें।",
+            "पत्तियों को लंबे समय तक गीला न रहने दें।",
+            "कृषि विशेषज्ञ से तुरंत उपचार की सलाह लें।"
+        ],
+        "prevention": [
+            "खेत में हवा का अच्छा प्रवाह रखें।",
+            "स्वस्थ बीज या कंद इस्तेमाल करें।",
+            "नियमित निगरानी करें।"
+        ]
+    },
+
+    "bacterial": {
+        "status": "Bacterial Disease",
+        "cause": "बैक्टीरिया से संबंधित संक्रमण हो सकता है।",
+        "symptoms": "पत्तियों पर छोटे भूरे या काले धब्बे दिखाई दे सकते हैं।",
+        "treatment": [
+            "संक्रमित हिस्सों को सावधानी से हटाएँ।",
+            "उपकरणों को साफ रखें।",
+            "गीले पौधों को छूने से बचें।",
+            "रोग की पुष्टि के लिए कृषि विशेषज्ञ से संपर्क करें।"
+        ],
+        "prevention": [
+            "रोगमुक्त बीज का प्रयोग करें।",
+            "खेत में उचित दूरी रखें।",
+            "फसल अवशेष साफ रखें।"
+        ]
+    },
+
+    "leaf_mold": {
+        "status": "Leaf Mold",
+        "cause": "आमतौर पर फफूंद से जुड़ी बीमारी।",
+        "symptoms": "पत्ती के निचले हिस्से में फफूंद जैसी परत और ऊपर पीले धब्बे दिख सकते हैं।",
+        "treatment": [
+            "खेत में हवा का प्रवाह बढ़ाएँ।",
+            "पौधों को अधिक घना न रखें।",
+            "पत्तियों को गीला रखने से बचें।",
+            "विशेषज्ञ की सलाह से रोग नियंत्रण करें।"
+        ],
+        "prevention": [
+            "ग्रीनहाउस में नमी नियंत्रित रखें।",
+            "संक्रमित पत्तियाँ हटाएँ।",
+            "साफ-सफाई बनाए रखें।"
+        ]
+    },
+
+    "septoria": {
+        "status": "Septoria Leaf Spot",
+        "cause": "Septoria फफूंद से जुड़ा रोग।",
+        "symptoms": "पत्तियों पर छोटे गोल धब्बे बनते हैं जिनके बीच में हल्का रंग हो सकता है।",
+        "treatment": [
+            "रोगग्रस्त निचली पत्तियाँ हटाएँ।",
+            "पौधों को जमीन से पानी के छींटों से बचाएँ।",
+            "खेत के संक्रमित अवशेष हटाएँ।",
+            "जरूरत पर विशेषज्ञ से फफूंदनाशक की सलाह लें।"
+        ],
+        "prevention": [
+            "फसल चक्र अपनाएँ।",
+            "पौधों में उचित दूरी रखें।",
+            "नियमित निगरानी करें।"
+        ]
+    },
+
+    "mosaic": {
+        "status": "Mosaic Virus",
+        "cause": "वायरस संक्रमण की संभावना।",
+        "symptoms": "पत्तियों पर हल्के और गहरे हरे रंग के मिश्रित पैटर्न तथा विकृति दिख सकती है।",
+        "treatment": [
+            "संक्रमित पौधों को अलग करें।",
+            "गंभीर रूप से संक्रमित पौधों को विशेषज्ञ की सलाह से हटाएँ।",
+            "वायरस का सीधा इलाज करने वाली सामान्य दवा नहीं होती।",
+            "वायरस फैलाने वाले कीटों की निगरानी करें।"
+        ],
+        "prevention": [
+            "रोगमुक्त बीज लगाएँ।",
+            "कीट वाहकों को नियंत्रित करें।",
+            "खेत में खरपतवार हटाएँ।"
+        ]
+    },
+
+    "rust": {
+        "status": "Rust Disease",
+        "cause": "रस्ट फफूंद से संबंधित रोग।",
+        "symptoms": "पत्तियों पर पीले, नारंगी या भूरे रंग के पाउडर जैसे धब्बे हो सकते हैं।",
+        "treatment": [
+            "बहुत संक्रमित पत्तियाँ हटाएँ।",
+            "हवा का प्रवाह बनाए रखें।",
+            "विशेषज्ञ की सलाह से उचित फफूंदनाशक चुनें।"
+        ],
+        "prevention": [
+            "फसल की नियमित जाँच करें।",
+            "फसल अवशेष साफ रखें।",
+            "रोगरोधी किस्में चुनें।"
+        ]
+    },
+
+    "spider_mites": {
+        "status": "Spider Mites",
+        "cause": "पौधों पर रस चूसने वाले माइट्स का हमला हो सकता है।",
+        "symptoms": "पत्तियों पर छोटे पीले बिंदु, जाल और सूखने के लक्षण दिख सकते हैं।",
+        "treatment": [
+            "पत्तियों के निचले हिस्से की जाँच करें।",
+            "प्रकोप की मात्रा का निरीक्षण करें।",
+            "स्थानीय विशेषज्ञ की सलाह से स्वीकृत नियंत्रण उपाय अपनाएँ।"
+        ],
+        "prevention": [
+            "खेत में धूल कम रखें।",
+            "लाभकारी कीटों की रक्षा करें।",
+            "नियमित निगरानी करें।"
+        ]
+    }
+}
+
+def get_disease_info(label):
+
+    lower = label.lower()
+
+    if "healthy" in lower:
+        return DISEASE_ADVICE["healthy"]
+
+    for key in DISEASE_ADVICE:
+        if key != "healthy" and key in lower:
+            return DISEASE_ADVICE[key]
+
+    return {
+        "status": "Possible Plant Disease",
+        "cause": "इस रोग की सही पुष्टि के लिए अतिरिक्त जाँच आवश्यक है।",
+        "symptoms": "AI ने इस तस्वीर को संभावित रोग वाली श्रेणी में रखा है।",
+        "treatment": [
+            "संक्रमित पत्तियों की जाँच करें।",
+            "पौधों को पर्याप्त हवा और उचित पानी दें।",
+            "कृषि विशेषज्ञ से रोग की पुष्टि करवाएँ।",
+            "बिना पुष्टि के pesticide का प्रयोग न करें।"
+        ],
+        "prevention": [
+            "खेत साफ रखें।",
+            "स्वस्थ बीज और पौध सामग्री चुनें।",
+            "नियमित निरीक्षण करें।"
+        ]
+    }
+
+# --------------------------------------------------------------
+# 8. AI IMAGE PREDICTION
+# --------------------------------------------------------------
+
+def predict_plant(image):
+
+    if image is None:
+        return "कृपया पहले पौधे की फोटो लें या अपलोड करें।", {}, None
+
+    image = image.convert("RGB").resize(
+        (IMAGE_SIZE, IMAGE_SIZE)
+    )
+
+    array = np.array(image, dtype=np.float32)
+    array = np.expand_dims(array, axis=0)
+
+    predictions = model.predict(array, verbose=0)[0]
+
+    top_indices = np.argsort(predictions)[::-1][:3]
+
+    index = int(top_indices[0])
+    label = class_names[index]
+    confidence = float(predictions[index]) * 100
+
+    top_results = {
+        class_names[i].replace("___", " - ").replace("_", " "):
+        round(float(predictions[i]) * 100, 2)
+        for i in top_indices
+    }
+
+    crop = label.split("___")[0] if "___" in label else "Unknown"
+    disease = label.split("___")[-1].replace("_", " ")
+
+    info = get_disease_info(label)
+
+    if confidence < 50:
+        status = "⚠️ LOW CONFIDENCE - PLEASE VERIFY"
+        note = """
+AI का विश्वास कम है। साफ रोशनी में दूसरी फोटो लें।
+अभी इस परिणाम के आधार पर दवा का चुनाव न करें।
+"""
+    elif "healthy" in label.lower():
+        status = "🟢 HEALTHY PLANT"
+        note = "फोटो में पहचाने गए रोग का स्पष्ट संकेत नहीं मिला।"
+    else:
+        status = "🔴 POSSIBLE DISEASE DETECTED"
+        note = "यह संभावित पहचान है, प्रयोगशाला या विशेषज्ञ द्वारा पुष्टि नहीं।"
+
+    def make_list(items):
+        return "\n".join("- " + item for item in items)
+
+    report = f"""
+# 🌿 AI PLANT HEALTH REPORT
+
+## {status}
+
+| Parameter | Result |
+|---|---|
+| Crop | {crop} |
+| Predicted disease | {disease} |
+| Confidence | {confidence:.2f}% |
+
+---
+
+## 🔬 Disease Information
+
+**Possible Cause:** {info['cause']}
+
+**Common Symptoms:** {info['symptoms']}
+
+---
+
+## 💊 Management Suggestions
+
+{make_list(info['treatment'])}
+
+---
+
+## 🛡 Prevention Suggestions
+
+{make_list(info['prevention'])}
+
+---
+
+## 📌 AI Result Note
+
+{note}
+
+**Important:** PlantVillage images are mostly controlled-background leaf
+images. Actual field conditions, lighting and similar-looking diseases
+can affect accuracy. This is an educational screening system.
+"""
+
+    return report, top_results, label
+
+# --------------------------------------------------------------
+# 9. SMART FARM MEDICINE CALCULATOR
+# --------------------------------------------------------------
+
+def calculate_dose(
+    acres,
+    basis,
+    rate,
+    water_per_acre,
+    unit,
+    predicted_label
+):
+
+    if predicted_label is None:
+        return "पहले पौधे की फोटो का विश्लेषण करें।"
+
+    if acres is None or rate is None or water_per_acre is None:
+        return "कृपया सभी मात्रा भरें।"
+
+    if acres <= 0 or rate <= 0 or water_per_acre <= 0:
+        return "सभी मान शून्य से अधिक होने चाहिए।"
+
+    total_water = acres * water_per_acre
+
+    if basis == "Per Acre":
+        total_product = acres * rate
+        calculation = f"{rate} {unit} प्रति एकड़ × {acres} एकड़"
+
+    else:
+        total_product = total_water * rate
+        calculation = f"{rate} {unit} प्रति लीटर × {total_water:.2f} लीटर"
+
+    if "healthy" in predicted_label.lower():
+        warning = """
+**सावधानी:** पौधा स्वस्थ पहचाना गया है। केवल कैलकुलेटर के लिए
+दवा डालने की जरूरत नहीं है।
+"""
+    else:
+        warning = """
+**सावधानी:** यह केवल आपके द्वारा दर्ज उत्पाद-लेबल की दर पर
+आधारित गणना है। AI ने किसी pesticide की सिफारिश या उसकी
+सुरक्षित मात्रा निर्धारित नहीं की है।
+"""
+
+    return f"""
+# 🚜 SMART FARM DOSE CALCULATOR
+
+### खेत की जानकारी
+
+- कुल क्षेत्रफल: **{acres} एकड़**
+- प्रति एकड़ पानी: **{water_per_acre} लीटर**
+- कुल पानी: **{total_water:.2f} लीटर**
+
+### उत्पाद की गणना
+
+- लेबल पर लिखी दर: **{rate} {unit}**
+- गणना का आधार: **{basis}**
+- कुल आवश्यक उत्पाद: **{total_product:.2f} {unit}**
+
+**Calculation:** {calculation}
+
+---
+
+### ⚠️ जरूरी सुरक्षा निर्देश
+
+{warning}
+
+1. केवल संबंधित फसल और रोग के लिए पंजीकृत उत्पाद इस्तेमाल करें।
+2. उत्पाद के लेबल पर लिखी फसल, रोग, dose और पानी की मात्रा जाँचें।
+3. PPE (दस्ताने, मास्क, सुरक्षात्मक कपड़े) का प्रयोग करें।
+4. हवा, बारिश और कटाई से पहले की अवधि संबंधी निर्देश मानें।
+5. अलग-अलग pesticide आपस में न मिलाएँ जब तक लेबल इसकी अनुमति न दे।
+6. संदेह होने पर कृषि विभाग या कृषि विशेषज्ञ से संपर्क करें।
+
+**यह कैलकुलेटर केवल तरल/ठोस उत्पाद की मात्रा की गणना करता है;
+यह उपचार की सिफारिश नहीं करता।**
+"""
+
+# --------------------------------------------------------------
+# 10. PROFESSIONAL GRADIO DESIGN
+# --------------------------------------------------------------
+
+CSS = """
+.gradio-container {
+    background: linear-gradient(140deg,#e8f5e9,#f1f8e9);
+}
+#hero {
+    background: linear-gradient(120deg,#14532d,#16a34a);
+    padding: 30px;
+    border-radius: 20px;
+    color: white;
+    text-align: center;
+}
+#hero h1 {
+    color: white !important;
+    font-size: 32px;
+}
+#hero p {
+    color: white !important;
+}
+.section {
+    border-radius: 15px;
+}
+"""
+
+with gr.Blocks(
+    theme=gr.themes.Soft(
+        primary_hue="green",
+        secondary_hue="emerald"
+    ),
+    css=CSS,
+    title="AI Plant Based Monitoring System"
+) as demo:
+
+    prediction_state = gr.State(None)
+
+    gr.HTML("""
+    <div id="hero">
+        <h1>🌿 AI PLANT BASED MONITORING SYSTEM</h1>
+        <p>Smart Farming | Plant Disease Detection | Farm Advisory</p>
+        <p>Powered by Deep Learning and MobileNetV2</p>
+    </div>
+    """)
+
+    gr.Markdown("""
+    ## 🌱 Welcome to Smart Plant Doctor
+
+    पौधे की फोटो कैप्चर करें और AI से उसकी संभावित बीमारी,
+    लक्षण, बचाव और खेती के सुझाव प्राप्त करें।
+    """)
+
+    with gr.Tabs():
+
+        # TAB 1 - DISEASE DETECTION
+
+        with gr.Tab("📸 Plant Disease Detection"):
+
+            with gr.Row():
+
+                with gr.Column():
+
+                    input_image = gr.Image(
+                        sources=["upload", "webcam"],
+                        type="pil",
+                        label="Capture or Upload Plant Photo",
+                        height=350
+                    )
+
+                    analyze_btn = gr.Button(
+                        "🔍 ANALYZE PLANT",
+                        variant="primary",
+                        size="lg"
+                    )
+
+                    clear_btn = gr.ClearButton(
+                        components=[input_image],
+                        value="Clear Photo"
+                    )
+
+                with gr.Column():
+
+                    report_output = gr.Markdown(
+                        "### 🌿 Your AI plant health report will appear here."
+                    )
+
+                    prediction_output = gr.Label(
+                        label="Top AI Predictions",
+                        num_top_classes=3
+                    )
+
+            analyze_btn.click(
+                fn=predict_plant,
+                inputs=[input_image],
+                outputs=[
+                    report_output,
+                    prediction_output,
+                    prediction_state
+                ]
+            )
+
+        # TAB 2 - FARM DOSE CALCULATOR
+
+        with gr.Tab("🚜 Farm Medicine Calculator"):
+
+            gr.Markdown("""
+            ## Calculate Product Quantity for Your Farm
+
+            अपने pesticide या कृषि उत्पाद के लेबल पर लिखी मात्रा भरें।
+            यह टूल एकड़ के हिसाब से कुल मात्रा की गणना करेगा।
+            """)
+
+            with gr.Row():
+
+                with gr.Column():
+
+                    acres = gr.Number(
+                        label="Total Farm Area (Acres)",
+                        value=1,
+                        minimum=0.01
+                    )
+
+                    water_per_acre = gr.Number(
+                        label="Water Required Per Acre (Litres)",
+                        value=200,
+                        minimum=0.01
+                    )
+
+                    basis = gr.Radio(
+                        choices=["Per Acre", "Per Litre"],
+                        value="Per Acre",
+                        label="Product Label Dose Basis"
+                    )
+
+                    rate = gr.Number(
+                        label="Product Label Dose",
+                        value=100,
+                        minimum=0.01
+                    )
+
+                    unit = gr.Radio(
+                        choices=["ml", "grams"],
+                        value="ml",
+                        label="Product Unit"
+                    )
+
+                    dose_btn = gr.Button(
+                        "🧮 Calculate Total Quantity",
+                        variant="primary"
+                    )
+
+                with gr.Column():
+
+                    dose_output = gr.Markdown(
+                        "### Your farm calculation will appear here."
+                    )
+
+            dose_btn.click(
+       
